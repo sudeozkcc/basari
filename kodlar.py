@@ -13,7 +13,7 @@ st.set_page_config(page_title="Teslimat & Evrak Analiz Paneli", page_icon="📦"
 def find_col(df: pd.DataFrame, possible_names: list):
     """Verilen olası sütun isimlerinden Excel'de var olanı esnek şekilde bulur."""
     for target in possible_names:
-        target_clean = target.strip().lower()
+        target_clean = str(target).strip().lower()
         for col in df.columns:
             if str(col).strip().lower() == target_clean:
                 return col
@@ -23,8 +23,8 @@ def find_col(df: pd.DataFrame, possible_names: list):
     return None
 
 def normalize_name(name) -> str:
-    """Müşteri ismini standartlaştırır."""
-    if pd.isna(name):
+    """Müşteri ismini dizeye çevirip standartlaştırır."""
+    if pd.isna(name) or name is None:
         return ""
     s = str(name).strip()
     s = s.replace("İ", "I").replace("ı", "i").upper()
@@ -61,7 +61,7 @@ def pct(a, b):
     return round((a / b) * 100, 2) if b else 0.0
 
 # --------------------------------------------------------------------------------------
-# VERİ HAZIRLAMA (SADELEŞTİRİLMİŞ)
+# VERİ HAZIRLAMA (HATA KORUMALI)
 # --------------------------------------------------------------------------------------
 
 def prepare_evrak_df(df: pd.DataFrame):
@@ -73,10 +73,12 @@ def prepare_evrak_df(df: pd.DataFrame):
         st.stop()
 
     out = pd.DataFrame()
-    out["musteri_ham"] = df[col_musteri]
+    out["musteri_ham"] = df[col_musteri].fillna("")
     out["musteri_norm"] = out["musteri_ham"].apply(normalize_name)
-    out["evrak_durum"] = df[col_durum].astype(str).str.strip().str.upper()
-    out["evrak_var"] = out["evrak_durum"].str.contains("VAR", na=False)
+    
+    # Metne dönüştürerek Tip Hatalarını (TypeError) Engelliyoruz
+    durum_norm = df[col_durum].fillna("").astype(str).str.strip().str.upper()
+    out["evrak_var"] = durum_norm.str.contains("VAR", na=False)
     return out
 
 def prepare_zaman_df(df: pd.DataFrame):
@@ -88,20 +90,20 @@ def prepare_zaman_df(df: pd.DataFrame):
         st.stop()
 
     out = pd.DataFrame()
-    out["musteri_ham"] = df[col_musteri]
+    out["musteri_ham"] = df[col_musteri].fillna("")
     out["musteri_norm"] = out["musteri_ham"].apply(normalize_name)
-    durum_norm = df[col_durum].astype(str).str.strip().str.upper()
 
-    def kategori(d):
-        if "GEÇ" in d or "GEC" in d:
+    def kategori(val):
+        d_str = str(val).upper() if pd.notna(val) else ""
+        if "GEÇ" in d_str or "GEC" in d_str:
             return "Geç"
-        if "ERKEN" in d:
+        if "ERKEN" in d_str:
             return "Erken"
-        if "ZAMAN" in d:
+        if "ZAMAN" in d_str:
             return "Zamanında"
         return "Diğer"
 
-    out["zaman_kategori"] = durum_norm.apply(kategori)
+    out["zaman_kategori"] = df[col_durum].apply(kategori)
     return out
 
 # --------------------------------------------------------------------------------------
@@ -200,6 +202,10 @@ zaman_pivot["zaman_basari_%"] = zaman_pivot.apply(
 # ========================================================================================
 if mode == "👤 Müşteri Analizi":
     tum_musteriler = sorted(set(evrak["musteri"]) | set(zaman["musteri"]))
+    if not tum_musteriler:
+        st.warning("İşlenecek müşteri verisi bulunamadı.")
+        st.stop()
+        
     secilen = st.selectbox("Müşteri Seçin:", tum_musteriler)
 
     m_evrak = evrak[evrak["musteri"] == secilen]
@@ -231,7 +237,7 @@ if mode == "👤 Müşteri Analizi":
 
     with col2:
         if zaman_dagilim:
-            renk_map = {"Geç": "#e74c3c", "Zamanında": "#3498db", "Erken": "#2ecc71"}
+            renk_map = {"Geç": "#e74c3c", "Zamanında": "#3498db", "Erken": "#2ecc71", "Diğer": "#95a5a6"}
             fig2 = px.pie(
                 names=list(zaman_dagilim.keys()),
                 values=list(zaman_dagilim.values()),
